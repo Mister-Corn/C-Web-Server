@@ -278,8 +278,14 @@ void get_date(int fd)
 void post_save(int fd, char *body)
 {
   // !!!! IMPLEMENT ME
+  // If there's no body, we're not gonna bother
+  if (body == NULL) {
+    send_response(fd, "HTTP/1.1 400 BAD REQUEST", "application/json", "{\"status\":\"request body empty\"}\n");
+    return;
+  }
+
   int openedFd = open(SAVE_FILE, O_CREAT|O_RDWR, 0644);
-  char buffer[1024];
+  char buffer[8192];
   int size = sprintf(buffer, "%s", body);
 
   // Copying line by line from `bankers.c` from last week's Processes project
