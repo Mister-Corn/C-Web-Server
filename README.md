@@ -2,296 +2,194 @@
 
 In this project, we'll finish the implementation of a web server in C.
 
-What's already there:
-
-* Skeleton code that handles all the network communication
-* The main loop in `main()`
-* Skeleton endpoint handler calls functions
-
 What you need to write:
 
-* Code that parses HTTP requests
-* Code that builds HTTP responses
-* Your code will interface with the existing code
+* HTTP request parser
+* HTTP response builder
+* LRU cache
+  * Doubly linked list (some functionality provided)
+  * Use existing hashtable functionality (below)
 
-What you don't need to write:
+* Your code will interface with the existing code. Understanding the existing
+  code is an expected part of this challenge.
 
-* Any system calls, including `send()` and `recv()`
-* Any new functions from scratch--there's a skeleton for all functions you'll
-  need
+What's already here:
+
+* `net.h` and `net.c` contain low-level networking code
+* `mime.h` and `mime.c` contains functionality for determining the MIME type of a file
+* `file.h` and `file.c` contains handy file-reading code that you may want to utilize, namely the `file_load()` and `file_free()` functions for reading file data and deallocating file data, respectively (or you could just perform these operations manually as well)
+* `hashtable.h` and `hashtable.c` contain an implementation of a hashtable (this one is a bit more complicated than what you built in the Hashtables sprint)
+* `llist.h` and `llist.c` contain an implementation of a doubly-linked list (used solely by the hashable--you don't need it)
+* `cache.h` and `cache.c` are where you will implement the LRU cache functionality for days 3 and 4
 
 ## What is a Web Server?
 
 A web server is a piece of software that accepts HTTP requests (e.g. GET
-requests for HTML pages), and returns responses (e.g. HTML pages). Other common
-uses are GET requests for getting data from RESTful API endpoints, images within
-web pages, and POST requests to upload data to the server (e.g. a form
-submission or file upload).
+requests for HTML pages), and returns responses (e.g. HTML pages). Other common uses are GET requests for getting data from RESTful API endpoints, images within web pages, and POST requests to upload data to the server (e.g. a form submission or file upload).
 
-## General Information about Networking
+## Reading
 
-Before learning about the web server, let's take a look at some general
-information about how networking works. Some of these terms will be familiar to
-you, and we'll expand their definitions a bit.
-
-### Networking Protocols
-
-_This is background information. You will not need to use this directly in the
-web server._
-
-A _protocol_ is an agreement between two programs about how they will
-communicate. For the Internet, most protocols take the form of "If you send me
-_x_, I'll send you back _y_." Internet-related protocols are clearly written
-down in specifications, known as an _RFC_.
-
-When you send some data out on the network, that data is wrapped up in several
-layers of additional data that provide information about data integrity,
-routing, and so on.
-
-At the highest level, you have your data that you want to transmit. As it is
-prepared for transmission on the network, the data is _encapsulated_ in other
-data to help it arrive at its destination. Any particular piece of data will be
-wrapped, partially unwrapped, and re-wrapped as it moves from wire to wire
-across the Internet to its destination.
-
-The act of wrapping data puts a new _header_ on the data. This header
-encapsulates the original data, _and all the headers that have been added before
-it_.
-
-Here is an example of a fully-encapsulated HTTP data packet.
-
-```
-+-----------------+
-| Ethernet Header |  Deals with routing on the LAN
-+-----------------+
-| IP Header       |  Deals with routing on the Internet
-+-----------------+
-| TCP Header      |  Deals with data integrity
-+-----------------+
-| HTTP Header     |  Deals with web data
-+-----------------+
-| <h1>Hello, worl |  Whatever you need to send
-| d!</h1>         |
-|                 |
-+-----------------+
-```
-
-The details of what data exists in each header type is beyond the scope of what
-most people need to know. It is enough to know the short description of what
-each does.
-
-As the data leaves your LAN and heads out in the world, the Ethernet header will
-be stripped off, the IP header will be examined to see how the data should be
-routed, and another header for potentially a different protocol will be put on
-to send the traffic over DSL, a cable modem, or fiber.
-
-The Ethernet header is created and managed by the network drivers in the OS.
-
-### Sockets
-
-_This is background information. You will not need to use this directly in the
-web server. This code is written for you._
-
-Under Unix-like operating systems, the _sockets API_ is the one used to send
-Internet traffic. It supports both the TCP and UDP protocols, and IPv4 and IPv6.
-
-The sockets API gives access to the IP and TCP layers in the diagram above.
-
-A _socket descriptor_ is a number used by the OS to keep track of open
-connections. It is used to send and receive data. In our web server, this
-variable is called `fd`.
-
-You can create a new socket (socket descriptor) with the `socket()` system call.
-
-Once created you still have to _bind_ it to a particular IP address (which the
-OS associates with a particular network card). This is done with the `bind()`
-system call.
-
-Once bound, you can read and write data to the socket using the `recv()` and
-`send()` system calls.
-
-* See also [Beej's Guide to Network Programming](https://beej.us/guide/bgnet/)
-
-## HTTP
-
-_In the webserver, you will be writing code that parses down strings that hold
-HTTP requests, and builds strings that hold HTTP responses. Study what an HTTP
-request and response look like._
-
-The final piece of information needed for web traffic is the _HyperText
-Transport Protocol_ (HTTP). While TCP deals with general data integrity and IP
-deals with routine, HTTP is concerned with `GET` and `POST` requests of web
-data.
-
-Like the other stages of networking, HTTP adds a header before the data it wants
-to send with the packet. Like IP and TCP, this header has a well-defined
-specification for exactly what needs to be sent.
-
-Though the specification is complex, fortunately only a small amount of information
-is needed to implement a barebones version.
-
-For each _HTTP request_ from a client, the server sends back an _HTTP
-response_.
-
-Here is an example HTTP `GET` request and response using version 1.1 of the HTTP
-protocol getting the page `http://lambdaschool.com/example`:
-
-```
-GET /example HTTP/1.1
-Host: lambdaschool.com
-
-```
-
-And here is a sample HTTP response:
-
-```
-HTTP/1.1 200 OK
-Date: Wed Dec 20 13:05:11 PST 2017
-Connection: close
-Content-Length: 41749
-Content-Type: text/html
-
-<!DOCTYPE html><html><head><title>Lambda School ...
-```
-
-The end of the header on both the request and response is marked by a blank line
-(i.e. two newlines in a row).
-
-If the file is not found, a `404` response is generated and returned by the
-server:
-
-```
-HTTP/1.1 404 NOT FOUND
-Date: Wed Dec 20 13:05:11 PST 2017
-Connection: close
-Content-Length: 13
-Content-Type: text/plain
-
-404 Not Found
-```
-
-If you've ever looked in the Network panel of your web browser's debugger, some
-of these headers might look familiar.
-
-Important things to note:
-
-* For HTTP/1.1, the request **must** include the `Host` header.
-* The second word of the first line of the response gives you a success or
-  failure indicator.
-* `Content-Length` gives the length of the request or response body, not
-  counting the blank line between the header and the body.
-* `Content-Type` gives you the MIME type of the content in the body. This is how
-  your web browser knows to display a page as plain text, as HTML, as a GIF
-  image, or anything else. They all have their own MIME types.
-* Even if your request has no body, a blank line still **must** appear after the
-  header.
-* `Connection: close` tells the web browser that the TCP connection will be
-  closed after this response. This should be included.
-* The `Date` should be the date right now, but this field is optional.
+* [Networking Background](guides/net.md)
+* [Doubly-Linked Lists](guides/dllist.md)
+* [LRU Caches](guides/lrucache.md)
+* [MIME types](guides/mime.md)
 
 ## Assignment
 
-We will write a simple web server that returns data on three `GET` endpoints:
+We will write a simple web server that returns files and some specialized data on a certain endpoint.
 
-* `http://localhost:3490/` should contain some HTML, e.g. `<h1>Hello, world!</h1>`.
-* `http://localhost:3490/d20` should return a random number between 1 and 20
-  inclusive as `text/plain` data.
-* `http://localhost:3490/date` should print the current date and time in GMT as
-  `text/plain` data.
+* `http://localhost:3490/d20` should return a random number between 1 and 20 inclusive as `text/plain` data.
+* Any other URL should map to the `serverroot` directory and files that lie within. For example:
 
-Examine the skeleton source code for which pieces you'll need to implement.
+  ```
+  http://localhost:3490/index.html
+  ```
 
-_Spend some time inventorying the code to see what is where. Write down notes.
-Write an outline. Note which functions call which other functions. Time spent up
-front doing this will reduce overall time spent down the road._
+  should serve the file
 
-For the portions that are already written, study the well-commented code to see
-how it works.
+  ```
+  ./serverroot/index.html
+  ```
 
-Don't worry: the networking code is already written.
+Examine the skeleton source code in `server.c` and `cache.c` for which pieces you'll need to implement.
 
-There is a `Makefile` provided. On the command line, type `make` to build the
-server.
+**IMPORTANT** _Spend some time inventorying the code to see what is where. Write down notes. Write an outline. Note which functions call which other functions. Time spent up front doing this will reduce overall time spent down the road._
+
+_The existing code is all one big hint on how to attack the problem._
+
+For the portions that are already written, study the moderately-well-commented code to see how it works.
+
+There is a `Makefile` provided. On the command line, type `make` to build the server.
 
 Type `./server` to run the server.
 
 ### Main Goals
 
-_Read through all the main and stretch goals before writing any code to get an overall view,
-then come back to goal #1 and dig in._
+_Read through all the main and stretch goals before writing any code to get an overall view, then come back to goal #1 and dig in._
 
-1. Examine `handle_http_request()` in the file `server.c`.
+#### Days 1 and 2
 
-   You'll want to parse the first line of the HTTP request header to see if this
-   is a `GET` or `POST` request, and to see what the path is. You'll use this
-   information to decide which handler function to call.
+1. Implement `send_response()`.
 
-   The variable `request` in `handle_http_request()` holds the entire HTTP
-   request once the `recv()` call returns.
-
-   Read the three components from the first line of the HTTP header. Hint:
-   `sscanf()`.
-
-   Right after that, call the appropriate handler based on the request type
-   (`GET`, `POST`) and the path (`/`, `/d20`, etc.) You can start by just
-   checking for `/` and add the others later as you get to them.
-
-   The handler for `GET /` is `get_root()` (search for the skeleton code). The
-   handler for `GET /d20` is `get_d20()`, etc.
+   This function is responsible for formatting all the pieces that make up an HTTP response into the proper format that clients expect. In other words, it needs to build a complete HTTP response with the given parameters. It should write the response to the string in the `response` variable.
    
-   Hint: `strcmp()` for matching the request method and path. Another hint:
-   `strcmp()` returns `0` if the strings are the _same_!
-
-   > Note: you can't `switch()` on strings in C since it will compare the string
-   > pointer values instead of the string contents. You have to use an
-   > `if`-`else` block with `strcmp()` to get the job done.
-
-   If you can't find an appropriate handler, call `resp_404()` instead to give
-   them a "404 Not Found" response.
-
-2. Implement the `get_root()` handler. This will call `send_response()`.
-
-   See above at the beginning of the assignment for what `get_root()` should
-   pass to `send_response()`.
-
-   If you need a hint as to what the `send_response()` call should look like,
-   check out the usage of it in `resp_404()`, just above there.
-
-   > The `fd` variable that is passed widely around to all the functions holds a
-   > _file descriptor_. It's just a number use to represent an open
-   > communications path. Usually they point to regular files on disk, but in
-   > the case it points to an open _socket_ network connection. All of the code
-   > to create and use `fd` has been written already, but we still need to pass
-   > it around to the points it is used.
-
-3. Implement `send_response()`.
-
-   This needs to build a complete HTTP response with the given parameters. It
-   should write the response to the string in the `response` variable.
-   
-   The total length of the header **and** body should be stored in the
-   `response_length` variable so that the `send()` call knows how many bytes to
+   The total length of the header **and** body should be stored in the `response_length` variable so that the `send()` call knows how many bytes to
    send out over the wire.
 
-   See the [HTTP](#http) section above for an example of an HTTP response and
-   use that to build your own.
+   See the [HTTP](#http) section above for an example of an HTTP response and use that to build your own.
 
    Hint: `sprintf()` for creating the HTTP response. `strlen()` for computing
    content length. `sprintf()` also returns the total number of bytes in the
-   result string, which might be helpful.
+   result string, which might be helpful. For getting the current time for the Date field of the response, you'll want to look at the `time()` and `localtime()` functions, both of which are already included in the `time.h` header file.
 
    > The HTTP `Content-Length` header only includes the length of the body, not
    > the header. But the `response_length` variable used by `send()` is the
    > total length of both header and body.
 
-4. Implement the `get_d20()` handler. Hint: `srand()` with `time(NULL)`,
-   `rand()`.
+   You can test whether you've gotten `send_response` working by calling the `resp_404` function from somewhere inside the `main` function, and seeing if the client receives the 404 response. 
 
-5. Implement the `get_date()` handler. Hint: `time(NULL)`, `gmtime()`.
+2. Examine `handle_http_request()` in the file `server.c`.
+
+   You'll want to parse the first line of the HTTP request header to see if this is a `GET` or `POST` request, and to see what the path is. You'll use this information to decide which handler function to call.
+
+   The variable `request` in `handle_http_request()` holds the entire HTTP request once the `recv()` call returns.
+
+   Read the three components from the first line of the HTTP header. Hint: `sscanf()`.
+
+   Right after that, call the appropriate handler based on the request type
+   (`GET`, `POST`) and the path (`/d20` or other file path.) You can start by
+   just checking for `/d20` and then add arbitrary files later.
+
+   Hint: `strcmp()` for matching the request method and path. Another hint:
+   `strcmp()` returns `0` if the strings are the _same_!
+
+   > Note: you can't `switch()` on strings in C since it will compare the string pointer values instead of the string contents. You have to use an
+   > `if`-`else` block with `strcmp()` to get the job done.
+
+   If you can't find an appropriate handler, call `resp_404()` instead to give
+   them a "404 Not Found" response.
+
+3. Implement the `get_d20()` handler. This will call `send_response()`.
+
+   See above at the beginning of the assignment for what `get_d20()` should pass to `send_response()`.
+
+   If you need a hint as to what the `send_response()` call should look like, check out the usage of it in `resp_404()`, just above there.
+
+   Note that unlike the other responses that send back file contents, the `d20` endpoint will simply compute a random number and send it back. It does not read the number from a file.
+
+   > The `fd` variable that is passed widely around to all the functions holds a _file descriptor_. It's just a number use to represent an open
+   > communications path. Usually they point to regular files on disk, but in
+   > this case it points to an open _socket_ network connection. All of the code to create and use `fd` has been written already, but we still need to pass it around to the points it is used.
+
+4. Implement arbitrary file serving.
+
+   Any other URL should map to the `serverroot` directory and files that lie within. For example:
+
+   `http://localhost:3490/index.html` serves file `./serverroot/index.html`.
+
+   `http://localhost:3490/foo/bar/baz.html` serves file
+   `./serverroot/foo/bar/baz.html`.
+
+   You might make use of the functionality in `file.c` to make this happen.
+
+   You also need to set the `Content-Type` header depending on what data is in
+   the file. `mime.c` has useful functionality for this.
+
+#### Days 3 and 4
+
+Implement an LRU cache. This will be used to cache files in RAM so you don't have to load them through the OS.
+
+When a file is requested, the cache should be checked to see if it is there. If so, the file is served from the cache. If not, the file is loaded from disk, served, and saved to the cache.
+
+The cache has a maximum number of entries. If it has more entries than the max, the least-recently used entries are discarded.
+
+The cache consists of a [doubly-linked
+list](https://en.wikipedia.org/wiki/Doubly_linked_list) and a
+[hash table](https://en.wikipedia.org/wiki/Hash_table).
+
+The hashtable code is already written and can be found in `hashtable.c`.
+
+1. Implement `cache_put()` in `cache.c`.
+
+   Algorithm:
+
+   * Allocate a new cache entry with the passed parameters.
+   * Insert the entry at the head of the doubly-linked list.
+   * Store the entry in the hashtable as well, indexed by the entry's `path`.
+   * Increment the current size of the cache.
+   * If the cache size is greater than the max size:
+     * Remove the entry from the hashtable, using the entry's `path` and the `hashtable_delete` function.
+     * Remove the cache entry at the tail of the linked list.
+     * Free the cache entry.
+     * Ensure the size counter for the number of entries in the cache is correct.
+
+2. Implement `cache_get()` in `cache.c`.
+
+   Algorithm:
+
+   * Attempt to find the cache entry pointer by `path` in the hash table.
+   * If not found, return `NULL`.
+   * Move the cache entry to the head of the doubly-linked list.
+   * Return the cache entry pointer.
+
+3. Add caching functionality to `server.c`.
+
+   When a file is requested, first check to see if the path to the file is in
+   the cache (use the file path as the key).
+
+   If it's there, serve it back.
+
+   If it's not there:
+
+   * Load the file from disk (see `file.c`)
+   * Store it in the cache
+   * Serve it
+
+There's a set of unit tests included to ensure that your cache implementation is functioning correctly. From the `src` directory, run `make tests` in order to run the unit tests against your implementation. 
 
 ### Stretch Goals
 
-Post a file:
+#### 1. Post a file
 
 1. Implement `find_start_of_body()` to locate the start of the HTTP request body
    (just after the header).
@@ -305,23 +203,56 @@ Post a file:
    The response from `post_save()` should be of type `application/json` and
    should be `{"status":"ok"}`.
 
-Concurrency:
+#### 2. Automatic `index.html` serving
 
-Convert the web server to be multiprocessed by using the `fork()` system call.
+We know that if the user hits `http://localhost:3490/index.html` it should
+return the file at `./serverroot/index.html`.
 
-1. Examine and understand the signal handler on `SIGCHLD` that watches for when
-   child processes exit. (This is already written for you.)
+Make it so that if the user hits `http://localhost:3490/` (which is endpoint
+`/`, on disk `./serverroot/`), if no file is found there, try adding an
+`index.html` to the end of the path and trying again.
 
-2. Modify the main `while` loop to `fork()` a new child process to handle each
-   request.
+So `http://localhost:3490/` would first try:
 
-   _Be careful not to fork-bomb your system to its knees!_
+```
+./serverroot/
+```
 
-   _Your child process **must** call `exit()` or you will risk having piles of
-   extra processes at work!_
+fail to find a file there, then try:
 
-3. Modify the `post_save()` function to get an exclusive lock on the file using
-   `flock()`. The lock should be unlocked once the file has been written.
+```
+./serverroot/index.html
+```
 
-   What happens if multiple processes try to write to the POSTed file at the
-   same time without locking the file?
+and succeed.
+
+#### 3. Implement functionality that will allow your server to serve any type of data, not just text data
+
+All the files that the server has been responding with have been text files of some sort. Augment the server such that if a client requests `http://localhost:3490/cat.jpg`, the server is able to fetch and respond with the requested file (of course, the file needs to exist in the server's directory structure). 
+
+Add an image to the `./serverroot` directory and update the `send_response` function such that it can handle _any_ type of data. _Hint: you'll want to look into the `memcpy` function from the C standard library_. 
+
+Note that `file_load` doesn't actually need any modification. It's already been written in such a way that it can handle arbitrary types of file data.
+
+#### 4. Expire cache entries
+
+It doesn't make sense to cache things forever--what if the file changes on disk?
+
+Add a `created_at` timestamp to cache entries.
+
+If an item is found in the cache, check to see if it is more than 1 minute old. If it is, delete it from the cache, then load the new one from disk as if it weren't found.
+
+You'll have to add a `cache_delete` function to your cache code that does the work of actually removing entries that are too old from the cache.
+
+#### 5. Concurrency
+
+_Difficulty: Pretty Dang Tough_
+
+Research the pthreads library.
+
+When a new connection comes in, launch a thread to handle it.
+
+Be sure to lock the cache when a thread accesses it so the threads don't step on each other's toes and corrupt the cache.
+
+Also have thread cleanup handlers to handle threads that have died.
+
