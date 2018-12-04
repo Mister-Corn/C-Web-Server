@@ -58,7 +58,16 @@ int send_response(int fd, char *header, char *content_type, void *body, int cont
     ///////////////////
     // IMPLEMENT ME! //
     ///////////////////
-
+    // Construct response string and put it in response
+    // Return value of sprintf is the number of
+    // characters written. We can use that for
+    // response_length
+    int response_length = sprintf(response, 
+        "%s\nDate: Wed Dec 20 13:05:11 PST 2017\nConnection: close\nContent-length: %d\nContent-Type: %s\n\n%s\n",
+        header,
+        content_length,
+        content_type,
+        body);
     // Send it all!
     int rv = send(fd, response, response_length, 0);
 
@@ -153,7 +162,7 @@ void handle_http_request(int fd, struct cache *cache)
         return;
     }
 
-
+    resp_404(fd);
     ///////////////////
     // IMPLEMENT ME! //
     ///////////////////
