@@ -51,7 +51,7 @@
  */
 int send_response(int fd, char *header, char *content_type, void *body, int content_length)
 {
-    const int max_response_size = 262144;
+    const int max_response_size = 254000;
     char response[max_response_size];
     // Time info from https://www.ibm.com/support/knowledgecenter/en/ssw_ibm_i_71/rtref/asctime.htm
     struct tm *newtime;
@@ -67,14 +67,22 @@ int send_response(int fd, char *header, char *content_type, void *body, int cont
     // response_length
     time(&ltime);
     newtime = localtime(&ltime);
+    char *formatted_time = asctime(newtime);
 
     int response_length = sprintf(response, 
-        "%s\nConnection: close\nDate:%sContent-Length: %d\nContent-Type: %s\n\n%s\n",
+        "%s\n"
+        "Connection: close\n"
+        "Date: Wed Dec 5 12:52:06 2018\n"
+        "Content-Length: %d\n"
+        "Content-Type: %s\n\n",
         header,
-        asctime(newtime),
         content_length,
-        content_type,
-        body);
+        content_type
+    );
+
+    printf("sprintf response_length: %d\n", response_length);
+    response_length = strlen(response);
+
     memcpy(response + response_length, body, content_length);
 
     int total_length = response_length + content_length;
@@ -82,12 +90,13 @@ int send_response(int fd, char *header, char *content_type, void *body, int cont
     puts("---RESPONSE---");
     printf("response_length:\t%d\n", response_length);
     printf("content_length:\t\t%d\n", content_length);
+    printf("response: %s\n", response);
     printf("total_length:\t\t%d\n", total_length);
     // printf("send_response RES: \n%s\n", response);
     puts("---------");
     #endif
     // Send it all!
-    int rv = send(fd, response, response_length + content_length, 0);
+    int rv = send(fd, response, total_length, 0);
 
     if (rv < 0) {
         perror("send");
@@ -108,11 +117,10 @@ void get_d20(int fd)
     // IMPLEMENT ME! //
     ///////////////////
     char header[] = "HTTP/1.1 200 OK";
-    int content_length = 3;
     char content_type[] = "text/plain";
-    char body[content_length];
+    char body[8];
     // Copy result to body string
-    sprintf(body, "%d", result);
+    int content_length = sprintf(body, "%d", result);
     // Use send_response() to send it back as text/plain data
     send_response(fd, header, content_type, body, content_length);
 
@@ -163,6 +171,12 @@ void get_file(int fd, struct cache *cache, char *request_path)
     
     filedata = file_load(filepath);
 
+    if (filedata == NULL) {
+        fprintf(stderr, "cannot find system 404 file\n");
+        resp_404(fd);
+        return;
+    }
+
     #if DEBUG
     puts("---get_file---");
     printf("Request Path: %s\n", request_path);
@@ -171,11 +185,6 @@ void get_file(int fd, struct cache *cache, char *request_path)
     puts("---------");
     #endif
 
-    if (filedata == NULL) {
-        fprintf(stderr, "cannot find system 404 file\n");
-        resp_404(fd);
-        return;
-    }
 
     mime_type = mime_type_get(filepath);
 
@@ -225,10 +234,12 @@ void handle_http_request(int fd, struct cache *cache)
 
     sscanf(request, "%s %s %s",
         &operation, &endpoint, &protocol);
+
     #if DEBUG
     printf("OP: %s\nENDPOINT: %s\nPROTOCOL: %s\n",
     operation, endpoint, protocol);
     #endif
+
     // If GET, handle the get endpoints
     if (strcmp(operation, "GET") == 0) {
         //    Check if it's /d20 and handle that special case
@@ -246,7 +257,7 @@ void handle_http_request(int fd, struct cache *cache)
         //    Otherwise serve the requested file by calling get_file()
     }
     // If we get here, we didn't find the op/endpoint:
-    resp_404(fd);
+    // resp_404(fd);
     
 
 
@@ -258,6 +269,7 @@ void handle_http_request(int fd, struct cache *cache)
  */
 int main(void)
 {
+    srand(time(NULL));
     int newfd;  // listen on sock_fd, new connection on newfd
     struct sockaddr_storage their_addr; // connector's address information
     char s[INET6_ADDRSTRLEN];
