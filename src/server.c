@@ -39,6 +39,7 @@
 #define SERVER_FILES "./serverfiles"
 #define SERVER_ROOT "./serverroot"
 
+#define DEBUG 1
 /**
  * Send an HTTP response
  *
@@ -50,9 +51,11 @@
  */
 int send_response(int fd, char *header, char *content_type, void *body, int content_length)
 {
-    const int max_response_size = 65536;
+    const int max_response_size = 262144;
     char response[max_response_size];
-
+    // Time info from https://www.ibm.com/support/knowledgecenter/en/ssw_ibm_i_71/rtref/asctime.htm
+    struct tm *newtime;
+    time_t ltime;
     // Build HTTP response and store it in response
 
     ///////////////////
@@ -62,14 +65,29 @@ int send_response(int fd, char *header, char *content_type, void *body, int cont
     // Return value of sprintf is the number of
     // characters written. We can use that for
     // response_length
+    time(&ltime);
+    newtime = localtime(&ltime);
+
     int response_length = sprintf(response, 
-        "%s\nDate: Wed Dec 20 13:05:11 PST 2017\nConnection: close\nContent-length: %d\nContent-Type: %s\n\n%s\n",
+        "%s\nConnection: close\nDate:%sContent-Length: %d\nContent-Type: %s\n\n%s\n",
         header,
+        asctime(newtime),
         content_length,
         content_type,
         body);
+    memcpy(response + response_length, body, content_length);
+
+    int total_length = response_length + content_length;
+    #if DEBUG
+    puts("---RESPONSE---");
+    printf("response_length:\t%d\n", response_length);
+    printf("content_length:\t\t%d\n", content_length);
+    printf("total_length:\t\t%d\n", total_length);
+    // printf("send_response RES: \n%s\n", response);
+    puts("---------");
+    #endif
     // Send it all!
-    int rv = send(fd, response, response_length, 0);
+    int rv = send(fd, response, response_length + content_length, 0);
 
     if (rv < 0) {
         perror("send");
@@ -85,12 +103,18 @@ int send_response(int fd, char *header, char *content_type, void *body, int cont
 void get_d20(int fd)
 {
     // Generate a random number between 1 and 20 inclusive
-    
+    int result = rand() % 21;
     ///////////////////
     // IMPLEMENT ME! //
     ///////////////////
-
+    char header[] = "HTTP/1.1 200 OK";
+    int content_length = 3;
+    char content_type[] = "text/plain";
+    char body[content_length];
+    // Copy result to body string
+    sprintf(body, "%d", result);
     // Use send_response() to send it back as text/plain data
+    send_response(fd, header, content_type, body, content_length);
 
     ///////////////////
     // IMPLEMENT ME! //
@@ -131,6 +155,33 @@ void get_file(int fd, struct cache *cache, char *request_path)
     ///////////////////
     // IMPLEMENT ME! //
     ///////////////////
+    char filepath[4096];
+    struct file_data *filedata;
+    char *mime_type;
+
+    snprintf(filepath, sizeof filepath, "%s%s", SERVER_ROOT, request_path);
+    
+    filedata = file_load(filepath);
+
+    #if DEBUG
+    puts("---get_file---");
+    printf("Request Path: %s\n", request_path);
+    printf("Filepath: %s\n", filepath);
+    printf("filedata->size: %d\n", filedata->size);
+    puts("---------");
+    #endif
+
+    if (filedata == NULL) {
+        fprintf(stderr, "cannot find system 404 file\n");
+        resp_404(fd);
+        return;
+    }
+
+    mime_type = mime_type_get(filepath);
+
+    send_response(fd, "HTTP/1.1 200 OK", mime_type, filedata->data, filedata->size);
+
+    file_free(filedata);
 }
 
 /**
@@ -162,17 +213,41 @@ void handle_http_request(int fd, struct cache *cache)
         return;
     }
 
-    resp_404(fd);
+    
     ///////////////////
     // IMPLEMENT ME! //
     ///////////////////
 
     // Read the three components of the first request line
+    char operation[256];
+    char endpoint[256];
+    char protocol[256];
 
+    sscanf(request, "%s %s %s",
+        &operation, &endpoint, &protocol);
+    #if DEBUG
+    printf("OP: %s\nENDPOINT: %s\nPROTOCOL: %s\n",
+    operation, endpoint, protocol);
+    #endif
     // If GET, handle the get endpoints
-
-    //    Check if it's /d20 and handle that special case
-    //    Otherwise serve the requested file by calling get_file()
+    if (strcmp(operation, "GET") == 0) {
+        //    Check if it's /d20 and handle that special case
+        if (strcmp(endpoint, "/d20") == 0) {
+            #if DEBUG
+            printf("/d20 condition TRUE\n");
+            #endif
+            get_d20(fd);
+            return;
+        }
+        else {
+            get_file(fd, cache, endpoint);
+            return;
+        }
+        //    Otherwise serve the requested file by calling get_file()
+    }
+    // If we get here, we didn't find the op/endpoint:
+    resp_404(fd);
+    
 
 
     // (Stretch) If POST, handle the post request
